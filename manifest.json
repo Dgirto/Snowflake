@@ -1,0 +1,89 @@
+{
+  "id": "snowflake",
+  "name": "Snowflake",
+  "name_en": "Snowflake",
+  "version": "1.0.0",
+  "description": "Consulta y análisis de datos en Snowflake: ejecutar consultas SQL de solo lectura, listar bases de datos/esquemas y estimar el alcance de una consulta antes de ejecutarla",
+  "description_en": "Read-only querying and analysis in Snowflake: run read-only SQL queries, list databases/schemas and estimate a query's scope before running it",
+  "icon": "icon.svg",
+  "category": "database",
+  "category_en": "database",
+  "keywords": ["snowflake", "sql", "data warehouse", "base de datos", "database", "solo lectura", "read-only", "analytics"],
+  "library": {
+    "package": "ruvic-snowflake-connector",
+    "install": "pip install git+https://github.com/Dgirto/Snowflake.git#subdirectory=lib",
+    "import_name": "ruvic_snowflake_connector"
+  },
+  "auth_modes": [
+    {
+      "id": "user_password",
+      "label": "Usuario y contraseña",
+      "fields": [
+        {
+          "key": "account",
+          "label": "Cuenta de Snowflake",
+          "type": "text",
+          "required": true,
+          "placeholder": "xy12345.us-east-1",
+          "help_text": "Identificador de cuenta (visible en la URL de Snowsight)"
+        },
+        {
+          "key": "username",
+          "label": "Usuario",
+          "type": "text",
+          "required": true,
+          "help_text": "Se recomienda un usuario dedicado con rol de solo lectura"
+        },
+        {
+          "key": "password",
+          "label": "Contraseña",
+          "type": "password",
+          "secret": true,
+          "required": true
+        },
+        {
+          "key": "warehouse",
+          "label": "Warehouse",
+          "type": "text",
+          "required": true,
+          "placeholder": "COMPUTE_WH",
+          "help_text": "Almacén de cómputo a usar para las consultas"
+        },
+        {
+          "key": "database",
+          "label": "Base de datos",
+          "type": "text",
+          "required": true
+        },
+        {
+          "key": "schema",
+          "label": "Esquema",
+          "type": "text",
+          "required": true,
+          "default": "PUBLIC"
+        },
+        {
+          "key": "role",
+          "label": "Rol",
+          "type": "text",
+          "required": false,
+          "help_text": "Rol de Snowflake a asumir (opcional, usa el rol por defecto del usuario si se omite)"
+        },
+        {
+          "key": "connect_timeout",
+          "label": "Timeout de conexión (segundos)",
+          "type": "number",
+          "required": false,
+          "default": "30"
+        }
+      ]
+    }
+  ],
+  "env_prefix": "RUVIC_SNOWFLAKE_",
+  "operations": ["db.execute_query", "db.list_databases_and_schemas", "db.estimate_query_cost"],
+  "test_connection": true,
+  "docs": {
+    "skill": "SKILL.md",
+    "permissions_note": "El usuario/rol necesita USAGE sobre el warehouse y SELECT sobre las bases/esquemas/tablas a consultar. No se otorgan permisos de escritura (INSERT, UPDATE, DELETE) ni de administración (CREATE, DROP, GRANT)."
+  }
+}

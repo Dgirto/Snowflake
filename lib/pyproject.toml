@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ruvic-snowflake-connector"
+version = "1.0.0"
+description = "Conector Ruvic de solo lectura para Snowflake"
+requires-python = ">=3.10"
+dependencies = [
+    "snowflake-connector-python>=3.6,<4.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["ruvic_snowflake_connector*"]
