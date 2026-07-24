@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title data-i18n="doc_title">Conector Snowflake — Ruvic</title>
+  <link rel="stylesheet" href="assets/ruvic.css">
+</head>
+<body>
+  <main class="ruvic-container">
+    <nav class="ruvic-toc" aria-label="Índice">
+      <h2 data-i18n="toc_title">Contenido</h2>
+      <ol>
+        <li><a href="#que-es" data-i18n="toc.que_es">¿Qué es y para qué sirve?</a></li>
+        <li><a href="#prerrequisitos" data-i18n="toc.prerrequisitos">Prerrequisitos</a></li>
+        <li><a href="#configuracion-fabricante" data-i18n="toc.configuracion_fabricante">Configuración en el fabricante</a></li>
+        <li><a href="#permisos" data-i18n="toc.permisos">Permisos requeridos</a></li>
+        <li><a href="#configuracion-ruvic" data-i18n="toc.configuracion_ruvic">Configuración en Ruvic</a></li>
+        <li><a href="#verificacion" data-i18n="toc.verificacion">Verificación</a></li>
+        <li><a href="#solucion-problemas" data-i18n="toc.solucion_problemas">Solución de problemas</a></li>
+        <li><a href="#faq-seguridad" data-i18n="toc.faq_seguridad">Preguntas frecuentes y notas de seguridad</a></li>
+      </ol>
+    </nav>
+
+    <h1 data-i18n="guide_title">Conector Snowflake — Guía de configuración</h1>
+    <p class="guide-updated" data-i18n="guide_updated">{{ULTIMA_ACTUALIZACION}}</p>
+
+    <section>
+      <h2 id="que-es" data-i18n="section.que_es">¿Qué es y para qué sirve?</h2>
+      <p data-i18n="section.que_es.body">El conector Snowflake permite que el agente de Ruvic consulte tu data warehouse de Snowflake <strong>en modo solo lectura</strong>: puede leer y analizar información, pero nunca modificarla. Una vez configurado, puedes pedirle al agente cosas como:</p>
+      <ul>
+        <li data-i18n="section.que_es.example1">"Muéstrame las ventas por región del último trimestre en la base VENTAS."</li>
+        <li data-i18n="section.que_es.example2">"¿Qué bases de datos y esquemas puedo consultar?"</li>
+        <li data-i18n="section.que_es.example3">"Antes de correr esta consulta sobre la tabla de pedidos, dime cuánto va a tocar."</li>
+      </ul>
+      <p data-i18n="section.que_es.ops_intro">Operaciones soportadas:</p>
+      <table>
+        <thead>
+          <tr>
+            <th data-i18n="table.operacion">Operación</th>
+            <th data-i18n="table.que_hace">Qué hace</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>db.execute_query</code></td>
+            <td data-i18n="section.que_es.op1">Ejecuta una consulta SQL de solo lectura (<code>SELECT</code> o <code>WITH</code>) y devuelve las filas (máximo 10 000 por consulta)</td>
+          </tr>
+          <tr>
+            <td><code>db.list_databases_and_schemas</code></td>
+            <td data-i18n="section.que_es.op2">Lista las bases de datos y esquemas visibles para el usuario configurado</td>
+          </tr>
+          <tr>
+            <td><code>db.estimate_query_cost</code></td>
+            <td data-i18n="section.que_es.op3">Estima el alcance de una consulta con <code>EXPLAIN</code> antes de ejecutarla, sin consumir cómputo del warehouse</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="callout callout-info">
+        <span class="callout-title" data-i18n="section.que_es.callout_title">Solo lectura, por diseño</span>
+        <span data-i18n="section.que_es.callout_body">El conector valida en código que toda consulta empiece con <code>SELECT</code> o <code>WITH</code>; cualquier otra sentencia (<code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code>, <code>CREATE</code>, <code>DROP</code>, <code>MERGE</code>) se rechaza antes de llegar a Snowflake. Además, el usuario dedicado solo tiene permiso <code>SELECT</code>: hay dos barreras independientes.</span>
+      </div>
+    </section>
+
+    <section>
+      <h2 id="prerrequisitos" data-i18n="section.prerrequisitos">Prerrequisitos</h2>
+      <ul>
+        <li data-i18n="section.prerrequisitos.item1">Una cuenta de <strong>Snowflake</strong> activa, con un identificador de cuenta válido (visible en la URL de Snowsight, ej. <code>xy12345.us-east-1</code>).</li>
+        <li data-i18n="section.prerrequisitos.item2">Acceso con rol <code>SECURITYADMIN</code> o equivalente (permiso para crear usuarios y roles), solo durante la configuración inicial.</li>
+        <li data-i18n="section.prerrequisitos.item3">Un <strong>warehouse</strong> (almacén de cómputo) existente o la posibilidad de crear uno pequeño y dedicado.</li>
+        <li data-i18n="section.prerrequisitos.item4">Los datos de conexión: cuenta, warehouse, base de datos y esquema por defecto que el agente va a consultar.</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2 id="configuracion-fabricante" data-i18n="section.configuracion_fabricante">Configuración en el fabricante</h2>
+      <p data-i18n="section.configuracion_fabricante.intro">Vas a crear un <strong>rol y un usuario dedicados de solo lectura</strong> para Ruvic. No reutilices un usuario administrador ni el de tu aplicación: un usuario dedicado permite auditar la actividad del agente, limitar el acceso al mínimo y controlar los costos de cómputo con un warehouse propio.</p>
+
+      <ol class="ruvic-steps">
+        <li>
+          <strong data-i18n="step.1.label">Conéctate a Snowflake como administrador.</strong>
+          <span data-i18n="step.1.body">Usa Snowsight o SnowSQL con un rol con privilegios para crear roles y usuarios (ej. <code>SECURITYADMIN</code>).</span>
+        </li>
+        <li>
+          <strong data-i18n="step.2.label">Crea el rol de solo lectura.</strong>
+          <span data-i18n="step.2.body">Este rol solo tendrá permisos de uso y lectura, nunca de escritura ni administración:</span>
+<pre><code>CREATE ROLE ruvic_reader;</code></pre>
+        </li>
+        <li>
+          <strong data-i18n="step.3.label">Asigna un warehouse mínimo dedicado.</strong>
+          <span data-i18n="step.3.body">Usa un warehouse pequeño (idealmente <code>XSMALL</code>) exclusivo para Ruvic, así controlas el costo de cómputo por separado del resto de tu organización:</span>
+<pre><code>CREATE WAREHOUSE IF NOT EXISTS ruvic_wh
+  WAREHOUSE_SIZE = 'XSMALL'
+  AUTO_SUSPEND = 60
+  AUTO_RESUME = TRUE;
+
+GRANT USAGE ON WAREHOUSE ruvic_wh TO ROLE ruvic_reader;</code></pre>
+        </li>
+        <li>
+          <strong data-i18n="step.4.label">Otorga acceso de solo lectura a las bases y esquemas a exponer.</strong>
+          <span data-i18n="step.4.body">Repite para cada base de datos/esquema que el agente deba poder consultar (el ejemplo usa <code>ventas.public</code>):</span>
+<pre><code>GRANT USAGE ON DATABASE ventas TO ROLE ruvic_reader;
+GRANT USAGE ON SCHEMA ventas.public TO ROLE ruvic_reader;
+GRANT SELECT ON ALL TABLES IN SCHEMA ventas.public TO ROLE ruvic_reader;
+GRANT SELECT ON FUTURE TABLES IN SCHEMA ventas.public TO ROLE ruvic_reader;</code></pre>
+          <div class="callout callout-info">
+            <span class="callout-title" data-i18n="step.4.note_title">Nota</span>
+            <span data-i18n="step.4.note_body">El <code>GRANT ... ON FUTURE TABLES</code> hace que las tablas creadas más adelante en ese esquema también sean legibles por Ruvic sin repetir el GRANT.</span>
+          </div>
+        </li>
+        <li>
+          <strong data-i18n="step.5.label">Crea el usuario dedicado y asígnale el rol.</strong>
+          <span data-i18n="step.5.body">Elige una contraseña fuerte (mínimo 16 caracteres, generada aleatoriamente) y guárdala: la usarás en el formulario de Ruvic (campo <em>Contraseña</em>).</span>
+<pre><code>CREATE USER ruvic_reader_user
+  PASSWORD = 'CAMBIA_ESTA_CONTRASEÑA'
+  DEFAULT_ROLE = ruvic_reader
+  DEFAULT_WAREHOUSE = ruvic_wh
+  MUST_CHANGE_PASSWORD = FALSE;
+
+GRANT ROLE ruvic_reader TO USER ruvic_reader_user;</code></pre>
+        </li>
+        <li>
+          <strong data-i18n="step.6.label">Configura la network policy (opcional pero recomendado).</strong>
+          <span data-i18n="step.6.body">Si tu organización exige restringir el acceso por IP, crea o actualiza una network policy de Snowflake con las IPs de salida de la plataforma Ruvic y asígnala al usuario dedicado:</span>
+<pre><code>CREATE NETWORK POLICY ruvic_policy
+  ALLOWED_IP_LIST = ('IP_DE_RUVIC/32');
+
+ALTER USER ruvic_reader_user SET NETWORK_POLICY = 'ruvic_policy';</code></pre>
+          <div class="screenshot-placeholder" data-i18n="step.6.screenshot">[ Captura: Network Policies en Snowsight (Admin → Security) con la IP de Ruvic — reemplazar por assets/img/snowflake-network-policy.png ]</div>
+        </li>
+        <li>
+          <strong data-i18n="step.7.label">Verifica el usuario desde fuera de tu organización.</strong>
+          <span data-i18n="step.7.body">Con SnowSQL o el conector Python, confirma que el usuario puede autenticarse y consultar con el rol y warehouse asignados:</span>
+<pre><code>snowsql -a xy12345.us-east-1 -u ruvic_reader_user -r ruvic_reader -w ruvic_wh -d ventas -s public -q "SELECT 1"</code></pre>
+          <span data-i18n="step.7.result">Si responde <code>1</code>, el fabricante quedó listo. Anota estos valores para la sección de configuración en Ruvic: cuenta, usuario, contraseña, warehouse, base de datos, esquema y rol.</span>
+        </li>
+      </ol>
+    </section>
+
+    <section>
+      <h2 id="permisos" data-i18n="section.permisos">Permisos requeridos</h2>
+      <p data-i18n="section.permisos.intro">Principio de mínimo privilegio: el usuario de Ruvic solo necesita estos permisos. No otorgues roles de escritura (<code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code>) ni de administración (<code>CREATE</code>, <code>DROP</code>, <code>GRANT</code>).</p>
+      <table>
+        <thead>
+          <tr>
+            <th data-i18n="table.permiso">Permiso</th>
+            <th data-i18n="table.para_que">Para qué sirve</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>USAGE</code> <span data-i18n="permisos.row1.suffix">(warehouse)</span></td>
+            <td data-i18n="permisos.row1.desc">Ejecutar cualquier consulta; el cómputo se cobra por tiempo de warehouse activo</td>
+          </tr>
+          <tr>
+            <td><code>USAGE</code> <span data-i18n="permisos.row2.suffix">(base de datos / esquema)</span></td>
+            <td data-i18n="permisos.row2.desc">Acceder a los objetos de la base y el esquema configurados</td>
+          </tr>
+          <tr>
+            <td><code>SELECT</code> <span data-i18n="permisos.row3.suffix">(tablas / vistas del esquema)</span></td>
+            <td data-i18n="permisos.row3.desc">Leer datos con <code>db.execute_query</code> y generar el plan de ejecución con <code>db.estimate_query_cost</code></td>
+          </tr>
+        </tbody>
+      </table>
+      <p data-i18n="section.permisos.note">No se otorgan permisos de escritura ni de administración: el rol <code>ruvic_reader</code> nunca debería incluir <code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code>, <code>CREATE</code>, <code>DROP</code> ni <code>GRANT</code>. Aunque se otorgaran por error, el conector rechaza en código cualquier sentencia que no empiece con <code>SELECT</code> o <code>WITH</code>.</p>
+    </section>
+
+    <section>
+      <h2 id="configuracion-ruvic" data-i18n="section.configuracion_ruvic">Configuración en Ruvic</h2>
+      <p data-i18n="section.configuracion_ruvic.intro">Entra a <strong>Settings → Conectores</strong>, busca la tarjeta <strong>Snowflake</strong> y pulsa <strong>Configurar</strong>. Diligencia el formulario con los valores que obtuviste en la sección anterior:</p>
+      <table>
+        <thead>
+          <tr>
+            <th data-i18n="table.campo">Campo del formulario</th>
+            <th data-i18n="table.valor">Valor</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td data-i18n="ruvic.field.account">Cuenta de Snowflake</td>
+            <td data-i18n="ruvic.field.account.desc">Identificador de cuenta, visible en la URL de Snowsight (ej. <code>xy12345.us-east-1</code>)</td>
+          </tr>
+          <tr>
+            <td data-i18n="ruvic.field.username">Usuario</td>
+            <td><code>ruvic_reader_user</code> <span data-i18n="ruvic.field.username.desc">(o el nombre que hayas elegido)</span></td>
+          </tr>
+          <tr>
+            <td data-i18n="ruvic.field.password">Contraseña</td>
+            <td data-i18n="ruvic.field.password.desc">La contraseña creada en el paso 5 de la sección anterior. Se guarda cifrada como secreto: la interfaz no volverá a mostrarla</td>
+          </tr>
+          <tr>
+            <td data-i18n="ruvic.field.warehouse">Warehouse</td>
+            <td><code>ruvic_wh</code> <span data-i18n="ruvic.field.warehouse.desc">(o el warehouse dedicado que hayas creado)</span></td>
+          </tr>
+          <tr>
+            <td data-i18n="ruvic.field.database">Base de datos</td>
+            <td data-i18n="ruvic.field.database.desc">Nombre de la base de datos a consultar (ej. <code>ventas</code>)</td>
+          </tr>
+          <tr>
+            <td data-i18n="ruvic.field.schema">Esquema</td>
+            <td data-i18n="ruvic.field.schema.desc">Esquema por defecto; <code>PUBLIC</code> si no lo cambiaste</td>
+          </tr>
+          <tr>
+            <td data-i18n="ruvic.field.role">Rol</td>
+            <td data-i18n="ruvic.field.role.desc">Opcional. <code>ruvic_reader</code>; si se omite, se usa el rol por defecto del usuario</td>
+          </tr>
+          <tr>
+            <td data-i18n="ruvic.field.timeout">Timeout de conexión (segundos)</td>
+            <td data-i18n="ruvic.field.timeout.desc">Opcional; <code>30</code> segundos por defecto</td>
+          </tr>
+        </tbody>
+      </table>
+      <p data-i18n="section.configuracion_ruvic.save"><span class="ruvic-button">Guardar</span> y luego pulsa <span class="ruvic-button">Probar conexión</span> — la plataforma se conectará a tu cuenta de Snowflake y confirmará que las credenciales, el warehouse y la red funcionan.</p>
+      <div class="screenshot-placeholder" data-i18n="section.configuracion_ruvic.screenshot">[ Captura: formulario del conector Snowflake en Settings → Conectores — reemplazar por assets/img/snowflake-form.png ]</div>
+    </section>
+
+    <section>
+      <h2 id="verificacion" data-i18n="section.verificacion">Verificación</h2>
+      <ol class="ruvic-steps">
+        <li>
+          <strong data-i18n="verificacion.step1.label">Test de conexión exitoso.</strong>
+          <span data-i18n="verificacion.step1.body">El botón <em>Probar conexión</em> debe responder: <em>"Conexión exitosa a Snowflake (tu-cuenta)"</em>. La tarjeta del conector cambia a estado <strong>Configurado</strong>.</span>
+        </li>
+        <li>
+          <strong data-i18n="verificacion.step2.label">Prueba con el agente: listar bases y esquemas.</strong>
+          <span data-i18n="verificacion.step2.body">Abre una conversación nueva con el agente y pídele:</span>
+          <blockquote data-i18n="verificacion.step2.quote">"Lista las bases de datos y esquemas de Snowflake que puedo consultar."</blockquote>
+          <span data-i18n="verificacion.step2.result">El agente debe responder con el listado real de bases y esquemas visibles para el usuario configurado.</span>
+        </li>
+        <li>
+          <strong data-i18n="verificacion.step3.label">Prueba con el agente: consulta de solo lectura.</strong>
+          <span data-i18n="verificacion.step3.body">Pídele una consulta simple sobre una tabla que sepas que existe:</span>
+          <blockquote data-i18n="verificacion.step3.quote">"Ejecuta un SELECT con LIMIT 10 sobre la tabla de pedidos y muéstrame el resultado."</blockquote>
+          <span data-i18n="verificacion.step3.result">Si el agente devuelve filas reales, el conector quedó operativo de punta a punta. Puedes pedirle además que estime el alcance de una consulta antes de correrla ("¿cuánto va a tocar esta consulta?") para confirmar que <code>estimate_query_cost</code> también funciona.</span>
+        </li>
+      </ol>
+    </section>
+
+    <section>
+      <h2 id="solucion-problemas" data-i18n="section.solucion_problemas">Solución de problemas</h2>
+      <table>
+        <thead>
+          <tr>
+            <th data-i18n="table.mensaje">Mensaje / síntoma</th>
+            <th data-i18n="table.causa">Causa probable y solución</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td data-i18n="problemas.row1.msg">"Autenticación fallida: Credenciales inválidas o sin permiso suficiente sobre esta cuenta de Snowflake."</td>
+            <td data-i18n="problemas.row1.fix">Usuario, contraseña o rol incorrectos, o el usuario no tiene el rol asignado. Verifica el paso 5 de la configuración en el fabricante y vuelve a guardar el formulario (deja la contraseña vacía para conservar la anterior o escribe la nueva para reemplazarla).</td>
+          </tr>
+          <tr>
+            <td data-i18n="problemas.row2.msg">"No se pudo alcanzar la cuenta '...' " o timeout de red</td>
+            <td data-i18n="problemas.row2.fix">El identificador de cuenta está mal escrito (revisa el formato, ej. <code>xy12345.us-east-1</code>) o la network policy de Snowflake bloquea las IPs de Ruvic. Revisa el paso 6 de la configuración en el fabricante y aumenta el timeout de conexión si tu red es lenta.</td>
+          </tr>
+          <tr>
+            <td data-i18n="problemas.row3.msg">Warehouse suspendido o sin acceso ("Warehouse ... cannot be used because it is suspended" o error de permisos al ejecutar)</td>
+            <td data-i18n="problemas.row3.fix">El warehouse configurado no existe, no tiene <code>AUTO_RESUME</code> habilitado o el rol no tiene <code>USAGE</code> sobre él. Repite el paso 3 de la configuración en el fabricante (crear/otorgar el warehouse) y confirma el nombre exacto en el campo Warehouse del formulario.</td>
+          </tr>
+          <tr>
+            <td data-i18n="problemas.row4.msg">El agente lista bases y esquemas pero falla al leer una tabla ("Consulta SQL inválida" o error de permisos)</td>
+            <td data-i18n="problemas.row4.fix">Falta el <code>GRANT SELECT</code> sobre esa tabla/esquema (tablas creadas antes del <code>GRANT ... ON FUTURE TABLES</code>), o la consulta no empieza con <code>SELECT</code>/<code>WITH</code> y fue rechazada por diseño. Repite el paso 4 de la configuración en el fabricante para ese esquema.</td>
+          </tr>
+          <tr>
+            <td data-i18n="problemas.row5.msg">El conector aparece "Sin configurar" tras guardar</td>
+            <td data-i18n="problemas.row5.fix">Algún campo obligatorio quedó vacío. Ábrelo de nuevo y completa cuenta, usuario, contraseña, warehouse, base de datos y esquema (el rol y el timeout son opcionales).</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2 id="faq-seguridad" data-i18n="section.faq_seguridad">Preguntas frecuentes y notas de seguridad</h2>
+
+      <h3 data-i18n="faq.q1">¿El agente puede modificar o borrar datos?</h3>
+      <p data-i18n="faq.a1">No. Dos barreras independientes lo impiden: el conector valida en código que toda consulta empiece con <code>SELECT</code> o <code>WITH</code> (cualquier otra sentencia se rechaza antes de llegar a Snowflake), y el rol <code>ruvic_reader</code> solo tiene permiso <code>SELECT</code> sobre los esquemas expuestos.</p>
+
+      <h3 data-i18n="faq.q2">¿Dónde queda guardada la contraseña?</h3>
+      <p data-i18n="faq.a2">Como secreto en el almacén de credenciales de la plataforma, asociado a tu usuario. La interfaz nunca vuelve a mostrarla; solo indica "definida". Para cambiarla, escribe una nueva en el formulario; para conservarla al editar otros campos, deja el campo vacío.</p>
+
+      <h3 data-i18n="faq.q3">Rotación de credenciales</h3>
+      <p data-i18n="faq.a3">Recomendado cada 90 días o según tu política: cambia la contraseña en Snowflake (<code>ALTER USER ruvic_reader_user SET PASSWORD = '...'</code>), actualízala en el formulario del conector y pulsa <em>Probar conexión</em>.</p>
+
+      <h3 data-i18n="faq.q4">¿Qué hago si la contraseña se compromete?</h3>
+      <ol>
+        <li data-i18n="faq.a4.step1">Cambia la contraseña en Snowflake de inmediato (<code>ALTER USER ruvic_reader_user SET PASSWORD = '...'</code>) o desactiva el usuario (<code>ALTER USER ruvic_reader_user SET DISABLED = TRUE</code>).</li>
+        <li data-i18n="faq.a4.step2">Revisa la actividad reciente del usuario en <code>SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY</code> y <code>QUERY_HISTORY</code>.</li>
+        <li data-i18n="faq.a4.step3">Actualiza la nueva contraseña en el formulario del conector.</li>
+      </ol>
+
+      <h3 data-i18n="faq.q5">¿Por qué usar un warehouse dedicado y pequeño?</h3>
+      <p data-i18n="faq.a5">Cada consulta que ejecuta el agente consume tiempo de cómputo del warehouse configurado, y eso genera cargos reales según tu plan de Snowflake. Un warehouse <code>XSMALL</code> dedicado a Ruvic, con <code>AUTO_SUSPEND</code> corto, aísla ese costo del resto de tu organización y facilita monitorearlo. Nota: <code>estimate_query_cost</code> usa <code>EXPLAIN</code>, que no ejecuta la consulta ni genera cargos, pero <code>execute_query</code> sí.</p>
+
+      <div class="callout callout-warning">
+        <span class="callout-title" data-i18n="faq.buenas_practicas.title">Buenas prácticas</span>
+        <span data-i18n="faq.buenas_practicas.body">Usa siempre un usuario y rol dedicados de solo lectura; asigna un warehouse pequeño exclusivo para controlar costos; restringe el acceso con una network policy si tu organización lo exige; no expongas esquemas con datos sensibles que el agente no necesite; y evita compartir la contraseña por canales no seguros.</span>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const I18N = {
+      es: {
+        doc_title: "Conector Snowflake — Ruvic",
+        toc_title: "Contenido",
+        "toc.que_es": "¿Qué es y para qué sirve?",
+        "toc.prerrequisitos": "Prerrequisitos",
+        "toc.configuracion_fabricante": "Configuración en el fabricante",
+        "toc.permisos": "Permisos requeridos",
+        "toc.configuracion_ruvic": "Configuración en Ruvic",
+        "toc.verificacion": "Verificación",
+        "toc.solucion_problemas": "Solución de problemas",
+        "toc.faq_seguridad": "Preguntas frecuentes y notas de seguridad",
+        guide_title: "Conector Snowflake — Guía de configuración",
+        guide_updated: "Actualizado: 2026-07-24",
+        "section.que_es": "¿Qué es y para qué sirve?",
+        "section.que_es.body": "El conector Snowflake permite que el agente de Ruvic consulte tu data warehouse de Snowflake en modo solo lectura: puede leer y analizar información, pero nunca modificarla. Una vez configurado, puedes pedirle al agente cosas como:",
+        "section.que_es.example1": "\"Muéstrame las ventas por región del último trimestre en la base VENTAS.\"",
+        "section.que_es.example2": "\"¿Qué bases de datos y esquemas puedo consultar?\"",
+        "section.que_es.example3": "\"Antes de correr esta consulta sobre la tabla de pedidos, dime cuánto va a tocar.\"",
+        "section.que_es.ops_intro": "Operaciones soportadas:",
+        "table.operacion": "Operación",
+        "table.que_hace": "Qué hace",
+        "section.que_es.op1": "Ejecuta una consulta SQL de solo lectura (SELECT o WITH) y devuelve las filas (máximo 10 000 por consulta)",
+        "section.que_es.op2": "Lista las bases de datos y esquemas visibles para el usuario configurado",
+        "section.que_es.op3": "Estima el alcance de una consulta con EXPLAIN antes de ejecutarla, sin consumir cómputo del warehouse",
+        "section.que_es.callout_title": "Solo lectura, por diseño",
+        "section.que_es.callout_body": "El conector valida en código que toda consulta empiece con SELECT o WITH; cualquier otra sentencia (INSERT, UPDATE, DELETE, CREATE, DROP, MERGE) se rechaza antes de llegar a Snowflake. Además, el usuario dedicado solo tiene permiso SELECT: hay dos barreras independientes.",
+        "section.prerrequisitos": "Prerrequisitos",
+        "section.prerrequisitos.item1": "Una cuenta de Snowflake activa, con un identificador de cuenta válido (visible en la URL de Snowsight, ej. xy12345.us-east-1).",
+        "section.prerrequisitos.item2": "Acceso con rol SECURITYADMIN o equivalente (permiso para crear usuarios y roles), solo durante la configuración inicial.",
+        "section.prerrequisitos.item3": "Un warehouse (almacén de cómputo) existente o la posibilidad de crear uno pequeño y dedicado.",
+        "section.prerrequisitos.item4": "Los datos de conexión: cuenta, warehouse, base de datos y esquema por defecto que el agente va a consultar.",
+        "section.configuracion_fabricante": "Configuración en el fabricante",
+        "section.configuracion_fabricante.intro": "Vas a crear un rol y un usuario dedicados de solo lectura para Ruvic. No reutilices un usuario administrador ni el de tu aplicación: un usuario dedicado permite auditar la actividad del agente, limitar el acceso al mínimo y controlar los costos de cómputo con un warehouse propio.",
+        "step.1.label": "Conéctate a Snowflake como administrador.",
+        "step.1.body": "Usa Snowsight o SnowSQL con un rol con privilegios para crear roles y usuarios (ej. SECURITYADMIN).",
+        "step.2.label": "Crea el rol de solo lectura.",
+        "step.2.body": "Este rol solo tendrá permisos de uso y lectura, nunca de escritura ni administración:",
+        "step.3.label": "Asigna un warehouse mínimo dedicado.",
+        "step.3.body": "Usa un warehouse pequeño (idealmente XSMALL) exclusivo para Ruvic, así controlas el costo de cómputo por separado del resto de tu organización:",
+        "step.4.label": "Otorga acceso de solo lectura a las bases y esquemas a exponer.",
+        "step.4.body": "Repite para cada base de datos/esquema que el agente deba poder consultar (el ejemplo usa ventas.public):",
+        "step.4.note_title": "Nota",
+        "step.4.note_body": "El GRANT ... ON FUTURE TABLES hace que las tablas creadas más adelante en ese esquema también sean legibles por Ruvic sin repetir el GRANT.",
+        "step.5.label": "Crea el usuario dedicado y asígnale el rol.",
+        "step.5.body": "Elige una contraseña fuerte (mínimo 16 caracteres, generada aleatoriamente) y guárdala: la usarás en el formulario de Ruvic (campo Contraseña).",
+        "step.6.label": "Configura la network policy (opcional pero recomendado).",
+        "step.6.body": "Si tu organización exige restringir el acceso por IP, crea o actualiza una network policy de Snowflake con las IPs de salida de la plataforma Ruvic y asígnala al usuario dedicado:",
+        "step.6.screenshot": "[ Captura: Network Policies en Snowsight (Admin → Security) con la IP de Ruvic — reemplazar por assets/img/snowflake-network-policy.png ]",
+        "step.7.label": "Verifica el usuario desde fuera de tu organización.",
+        "step.7.body": "Con SnowSQL o el conector Python, confirma que el usuario puede autenticarse y consultar con el rol y warehouse asignados:",
+        "step.7.result": "Si responde 1, el fabricante quedó listo. Anota estos valores para la sección de configuración en Ruvic: cuenta, usuario, contraseña, warehouse, base de datos, esquema y rol.",
+        "section.permisos": "Permisos requeridos",
+        "section.permisos.intro": "Principio de mínimo privilegio: el usuario de Ruvic solo necesita estos permisos. No otorgues roles de escritura (INSERT, UPDATE, DELETE) ni de administración (CREATE, DROP, GRANT).",
+        "table.permiso": "Permiso",
+        "table.para_que": "Para qué sirve",
+        "permisos.row1.suffix": "(warehouse)",
+        "permisos.row1.desc": "Ejecutar cualquier consulta; el cómputo se cobra por tiempo de warehouse activo",
+        "permisos.row2.suffix": "(base de datos / esquema)",
+        "permisos.row2.desc": "Acceder a los objetos de la base y el esquema configurados",
+        "permisos.row3.suffix": "(tablas / vistas del esquema)",
+        "permisos.row3.desc": "Leer datos con db.execute_query y generar el plan de ejecución con db.estimate_query_cost",
+        "section.permisos.note": "No se otorgan permisos de escritura ni de administración: el rol ruvic_reader nunca debería incluir INSERT, UPDATE, DELETE, CREATE, DROP ni GRANT. Aunque se otorgaran por error, el conector rechaza en código cualquier sentencia que no empiece con SELECT o WITH.",
+        "section.configuracion_ruvic": "Configuración en Ruvic",
+        "section.configuracion_ruvic.intro": "Entra a Settings → Conectores, busca la tarjeta Snowflake y pulsa Configurar. Diligencia el formulario con los valores que obtuviste en la sección anterior:",
+        "table.campo": "Campo del formulario",
+        "table.valor": "Valor",
+        "ruvic.field.account": "Cuenta de Snowflake",
+        "ruvic.field.account.desc": "Identificador de cuenta, visible en la URL de Snowsight (ej. xy12345.us-east-1)",
+        "ruvic.field.username": "Usuario",
+        "ruvic.field.username.desc": "(o el nombre que hayas elegido)",
+        "ruvic.field.password": "Contraseña",
+        "ruvic.field.password.desc": "La contraseña creada en el paso 5 de la sección anterior. Se guarda cifrada como secreto: la interfaz no volverá a mostrarla",
+        "ruvic.field.warehouse": "Warehouse",
+        "ruvic.field.warehouse.desc": "(o el warehouse dedicado que hayas creado)",
+        "ruvic.field.database": "Base de datos",
+        "ruvic.field.database.desc": "Nombre de la base de datos a consultar (ej. ventas)",
+        "ruvic.field.schema": "Esquema",
+        "ruvic.field.schema.desc": "Esquema por defecto; PUBLIC si no lo cambiaste",
+        "ruvic.field.role": "Rol",
+        "ruvic.field.role.desc": "Opcional. ruvic_reader; si se omite, se usa el rol por defecto del usuario",
+        "ruvic.field.timeout": "Timeout de conexión (segundos)",
+        "ruvic.field.timeout.desc": "Opcional; 30 segundos por defecto",
+        "section.configuracion_ruvic.save": "Guardar y luego pulsa Probar conexión — la plataforma se conectará a tu cuenta de Snowflake y confirmará que las credenciales, el warehouse y la red funcionan.",
+        "section.configuracion_ruvic.screenshot": "[ Captura: formulario del conector Snowflake en Settings → Conectores — reemplazar por assets/img/snowflake-form.png ]",
+        "section.verificacion": "Verificación",
+        "verificacion.step1.label": "Test de conexión exitoso.",
+        "verificacion.step1.body": "El botón Probar conexión debe responder: \"Conexión exitosa a Snowflake (tu-cuenta)\". La tarjeta del conector cambia a estado Configurado.",
+        "verificacion.step2.label": "Prueba con el agente: listar bases y esquemas.",
+        "verificacion.step2.body": "Abre una conversación nueva con el agente y pídele:",
+        "verificacion.step2.quote": "\"Lista las bases de datos y esquemas de Snowflake que puedo consultar.\"",
+        "verificacion.step2.result": "El agente debe responder con el listado real de bases y esquemas visibles para el usuario configurado.",
+        "verificacion.step3.label": "Prueba con el agente: consulta de solo lectura.",
+        "verificacion.step3.body": "Pídele una consulta simple sobre una tabla que sepas que existe:",
+        "verificacion.step3.quote": "\"Ejecuta un SELECT con LIMIT 10 sobre la tabla de pedidos y muéstrame el resultado.\"",
+        "verificacion.step3.result": "Si el agente devuelve filas reales, el conector quedó operativo de punta a punta. Puedes pedirle además que estime el alcance de una consulta antes de correrla (\"¿cuánto va a tocar esta consulta?\") para confirmar que estimate_query_cost también funciona.",
+        "section.solucion_problemas": "Solución de problemas",
+        "table.mensaje": "Mensaje / síntoma",
+        "table.causa": "Causa probable y solución",
+        "problemas.row1.msg": "\"Autenticación fallida: Credenciales inválidas o sin permiso suficiente sobre esta cuenta de Snowflake.\"",
+        "problemas.row1.fix": "Usuario, contraseña o rol incorrectos, o el usuario no tiene el rol asignado. Verifica el paso 5 de la configuración en el fabricante y vuelve a guardar el formulario (deja la contraseña vacía para conservar la anterior o escribe la nueva para reemplazarla).",
+        "problemas.row2.msg": "\"No se pudo alcanzar la cuenta '...' \" o timeout de red",
+        "problemas.row2.fix": "El identificador de cuenta está mal escrito (revisa el formato, ej. xy12345.us-east-1) o la network policy de Snowflake bloquea las IPs de Ruvic. Revisa el paso 6 de la configuración en el fabricante y aumenta el timeout de conexión si tu red es lenta.",
+        "problemas.row3.msg": "Warehouse suspendido o sin acceso (\"Warehouse ... cannot be used because it is suspended\" o error de permisos al ejecutar)",
+        "problemas.row3.fix": "El warehouse configurado no existe, no tiene AUTO_RESUME habilitado o el rol no tiene USAGE sobre él. Repite el paso 3 de la configuración en el fabricante (crear/otorgar el warehouse) y confirma el nombre exacto en el campo Warehouse del formulario.",
+        "problemas.row4.msg": "El agente lista bases y esquemas pero falla al leer una tabla (\"Consulta SQL inválida\" o error de permisos)",
+        "problemas.row4.fix": "Falta el GRANT SELECT sobre esa tabla/esquema (tablas creadas antes del GRANT ... ON FUTURE TABLES), o la consulta no empieza con SELECT/WITH y fue rechazada por diseño. Repite el paso 4 de la configuración en el fabricante para ese esquema.",
+        "problemas.row5.msg": "El conector aparece \"Sin configurar\" tras guardar",
+        "problemas.row5.fix": "Algún campo obligatorio quedó vacío. Ábrelo de nuevo y completa cuenta, usuario, contraseña, warehouse, base de datos y esquema (el rol y el timeout son opcionales).",
+        "section.faq_seguridad": "Preguntas frecuentes y notas de seguridad",
+        "faq.q1": "¿El agente puede modificar o borrar datos?",
+        "faq.a1": "No. Dos barreras independientes lo impiden: el conector valida en código que toda consulta empiece con SELECT o WITH (cualquier otra sentencia se rechaza antes de llegar a Snowflake), y el rol ruvic_reader solo tiene permiso SELECT sobre los esquemas expuestos.",
+        "faq.q2": "¿Dónde queda guardada la contraseña?",
+        "faq.a2": "Como secreto en el almacén de credenciales de la plataforma, asociado a tu usuario. La interfaz nunca vuelve a mostrarla; solo indica \"definida\". Para cambiarla, escribe una nueva en el formulario; para conservarla al editar otros campos, deja el campo vacío.",
+        "faq.q3": "Rotación de credenciales",
+        "faq.a3": "Recomendado cada 90 días o según tu política: cambia la contraseña en Snowflake (ALTER USER ruvic_reader_user SET PASSWORD = '...'), actualízala en el formulario del conector y pulsa Probar conexión.",
+        "faq.q4": "¿Qué hago si la contraseña se compromete?",
+        "faq.a4.step1": "Cambia la contraseña en Snowflake de inmediato (ALTER USER ruvic_reader_user SET PASSWORD = '...') o desactiva el usuario (ALTER USER ruvic_reader_user SET DISABLED = TRUE).",
+        "faq.a4.step2": "Revisa la actividad reciente del usuario en SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY y QUERY_HISTORY.",
+        "faq.a4.step3": "Actualiza la nueva contraseña en el formulario del conector.",
+        "faq.q5": "¿Por qué usar un warehouse dedicado y pequeño?",
+        "faq.a5": "Cada consulta que ejecuta el agente consume tiempo de cómputo del warehouse configurado, y eso genera cargos reales según tu plan de Snowflake. Un warehouse XSMALL dedicado a Ruvic, con AUTO_SUSPEND corto, aísla ese costo del resto de tu organización y facilita monitorearlo. Nota: estimate_query_cost usa EXPLAIN, que no ejecuta la consulta ni genera cargos, pero execute_query sí.",
+        "faq.buenas_practicas.title": "Buenas prácticas",
+        "faq.buenas_practicas.body": "Usa siempre un usuario y rol dedicados de solo lectura; asigna un warehouse pequeño exclusivo para controlar costos; restringe el acceso con una network policy si tu organización lo exige; no expongas esquemas con datos sensibles que el agente no necesite; y evita compartir la contraseña por canales no seguros.",
+      },
+      en: {
+        doc_title: "Snowflake Connector — Ruvic",
+        toc_title: "Contents",
+        "toc.que_es": "What it is and what it's for",
+        "toc.prerrequisitos": "Prerequisites",
+        "toc.configuracion_fabricante": "Vendor / provider setup",
+        "toc.permisos": "Required permissions",
+        "toc.configuracion_ruvic": "Configuration in Ruvic",
+        "toc.verificacion": "Verification",
+        "toc.solucion_problemas": "Troubleshooting",
+        "toc.faq_seguridad": "FAQ and security notes",
+        guide_title: "Snowflake Connector — Setup Guide",
+        guide_updated: "Updated: 2026-07-24",
+        "section.que_es": "What it is and what it's for",
+        "section.que_es.body": "The Snowflake connector lets the Ruvic agent query your Snowflake data warehouse in read-only mode: it can read and analyze information but never modify it. Once configured, you can ask the agent things like:",
+        "section.que_es.example1": "\"Show me sales by region for last quarter in the SALES database.\"",
+        "section.que_es.example2": "\"What databases and schemas can I query?\"",
+        "section.que_es.example3": "\"Before running this query on the orders table, tell me how much it would touch.\"",
+        "section.que_es.ops_intro": "Supported operations:",
+        "table.operacion": "Operation",
+        "table.que_hace": "What it does",
+        "section.que_es.op1": "Runs a read-only SQL query (SELECT or WITH) and returns the rows (max 10,000 per query)",
+        "section.que_es.op2": "Lists the databases and schemas visible to the configured user",
+        "section.que_es.op3": "Estimates a query's scope with EXPLAIN before running it, without consuming warehouse compute",
+        "section.que_es.callout_title": "Read-only by design",
+        "section.que_es.callout_body": "The connector validates in code that every query starts with SELECT or WITH; any other statement (INSERT, UPDATE, DELETE, CREATE, DROP, MERGE) is rejected before it ever reaches Snowflake. On top of that, the dedicated user only has SELECT: two independent safeguards.",
+        "section.prerrequisitos": "Prerequisites",
+        "section.prerrequisitos.item1": "An active Snowflake account with a valid account identifier (visible in the Snowsight URL, e.g. xy12345.us-east-1).",
+        "section.prerrequisitos.item2": "Access with the SECURITYADMIN role or equivalent (permission to create users and roles), only during initial setup.",
+        "section.prerrequisitos.item3": "An existing warehouse (compute cluster), or the ability to create a small dedicated one.",
+        "section.prerrequisitos.item4": "The connection details: account, warehouse, database and default schema the agent will query.",
+        "section.configuracion_fabricante": "Vendor / provider setup",
+        "section.configuracion_fabricante.intro": "You will create a dedicated read-only role and user for Ruvic. Do not reuse an admin or application user: a dedicated user lets you audit the agent's activity, keep access to a minimum and control compute costs with its own warehouse.",
+        "step.1.label": "Connect to Snowflake as an administrator.",
+        "step.1.body": "Use Snowsight or SnowSQL with a role that can create roles and users (e.g. SECURITYADMIN).",
+        "step.2.label": "Create the read-only role.",
+        "step.2.body": "This role will only ever have usage and read permissions, never write or admin ones:",
+        "step.3.label": "Assign a minimal dedicated warehouse.",
+        "step.3.body": "Use a small warehouse (ideally XSMALL) exclusive to Ruvic, so you can track its compute cost separately from the rest of your organization:",
+        "step.4.label": "Grant read-only access to the databases and schemas to expose.",
+        "step.4.body": "Repeat for every database/schema the agent should be able to query (the example uses sales.public):",
+        "step.4.note_title": "Note",
+        "step.4.note_body": "The GRANT ... ON FUTURE TABLES statement makes tables created later in that schema readable by Ruvic without re-running the GRANT.",
+        "step.5.label": "Create the dedicated user and grant it the role.",
+        "step.5.body": "Choose a strong password (16+ random characters) and save it: you will paste it into the Ruvic form (Password field).",
+        "step.6.label": "Configure a network policy (optional but recommended).",
+        "step.6.body": "If your organization requires restricting access by IP, create or update a Snowflake network policy with Ruvic's outbound IPs and assign it to the dedicated user:",
+        "step.6.screenshot": "[ Screenshot: Network Policies in Snowsight (Admin → Security) with the Ruvic IP — replace with assets/img/snowflake-network-policy.png ]",
+        "step.7.label": "Verify the user from outside your organization.",
+        "step.7.body": "Using SnowSQL or the Python connector, confirm the user can authenticate and query with the assigned role and warehouse:",
+        "step.7.result": "If it returns 1, the vendor side is ready. Write down these values for the Ruvic configuration section: account, username, password, warehouse, database, schema and role.",
+        "section.permisos": "Required permissions",
+        "section.permisos.intro": "Least-privilege principle: the Ruvic user only needs these permissions. Do not grant write roles (INSERT, UPDATE, DELETE) or admin roles (CREATE, DROP, GRANT).",
+        "table.permiso": "Permission",
+        "table.para_que": "Why the connector needs it",
+        "permisos.row1.suffix": "(warehouse)",
+        "permisos.row1.desc": "Run any query; compute is billed by active warehouse time",
+        "permisos.row2.suffix": "(database / schema)",
+        "permisos.row2.desc": "Access the objects in the configured database and schema",
+        "permisos.row3.suffix": "(tables / views in the schema)",
+        "permisos.row3.desc": "Read data with db.execute_query and generate the execution plan with db.estimate_query_cost",
+        "section.permisos.note": "No write or admin permissions are granted: the ruvic_reader role should never include INSERT, UPDATE, DELETE, CREATE, DROP or GRANT. Even if they were granted by mistake, the connector rejects in code any statement that doesn't start with SELECT or WITH.",
+        "section.configuracion_ruvic": "Configuration in Ruvic",
+        "section.configuracion_ruvic.intro": "Go to Settings → Connectors, find the Snowflake card and click Configure. Fill in the form with the values you obtained in the previous section:",
+        "table.campo": "Form field",
+        "table.valor": "Value",
+        "ruvic.field.account": "Snowflake account",
+        "ruvic.field.account.desc": "Account identifier, visible in the Snowsight URL (e.g. xy12345.us-east-1)",
+        "ruvic.field.username": "Username",
+        "ruvic.field.username.desc": "(or whatever name you chose)",
+        "ruvic.field.password": "Password",
+        "ruvic.field.password.desc": "The password created in step 5 of the previous section. Stored encrypted as a secret: the UI will never display it again",
+        "ruvic.field.warehouse": "Warehouse",
+        "ruvic.field.warehouse.desc": "(or the dedicated warehouse you created)",
+        "ruvic.field.database": "Database",
+        "ruvic.field.database.desc": "Name of the database to query (e.g. sales)",
+        "ruvic.field.schema": "Schema",
+        "ruvic.field.schema.desc": "Default schema; PUBLIC unless you changed it",
+        "ruvic.field.role": "Role",
+        "ruvic.field.role.desc": "Optional. ruvic_reader; if omitted, the user's default role is used",
+        "ruvic.field.timeout": "Connection timeout (seconds)",
+        "ruvic.field.timeout.desc": "Optional; defaults to 30 seconds",
+        "section.configuracion_ruvic.save": "Save and then click Test connection — the platform will connect to your Snowflake account and confirm credentials, warehouse and networking work.",
+        "section.configuracion_ruvic.screenshot": "[ Screenshot: Snowflake connector form in Settings → Connectors — replace with assets/img/snowflake-form.png ]",
+        "section.verificacion": "Verification",
+        "verificacion.step1.label": "Successful connection test.",
+        "verificacion.step1.body": "The Test connection button should return: \"Successful connection to Snowflake (your-account)\". The connector card switches to Configured.",
+        "verificacion.step2.label": "Test with the agent: list databases and schemas.",
+        "verificacion.step2.body": "Open a new conversation with the agent and ask:",
+        "verificacion.step2.quote": "\"List the Snowflake databases and schemas I can query.\"",
+        "verificacion.step2.result": "The agent should reply with the actual list of databases and schemas visible to the configured user.",
+        "verificacion.step3.label": "Test with the agent: read-only query.",
+        "verificacion.step3.body": "Ask for a simple query against a table you know exists:",
+        "verificacion.step3.quote": "\"Run a SELECT with LIMIT 10 on the orders table and show me the result.\"",
+        "verificacion.step3.result": "If the agent returns real rows, the connector is fully operational end to end. You can also ask it to estimate a query's scope before running it (\"how much would this query touch?\") to confirm estimate_query_cost works too.",
+        "section.solucion_problemas": "Troubleshooting",
+        "table.mensaje": "Message / symptom",
+        "table.causa": "Likely cause and fix",
+        "problemas.row1.msg": "\"Authentication failed: Invalid credentials or insufficient permission on this Snowflake account.\"",
+        "problemas.row1.fix": "Wrong username, password or role, or the user doesn't have the role assigned. Check step 5 of the vendor setup and re-save the form (leave the password empty to keep the previous one, or type a new one to replace it).",
+        "problemas.row2.msg": "\"Could not reach account '...'\" or network timeout",
+        "problemas.row2.fix": "The account identifier is mistyped (check the format, e.g. xy12345.us-east-1) or Snowflake's network policy is blocking Ruvic's IPs. Review step 6 of the vendor setup and increase the connection timeout if your network is slow.",
+        "problemas.row3.msg": "Warehouse suspended or unreachable (\"Warehouse ... cannot be used because it is suspended\" or a permission error when running)",
+        "problemas.row3.fix": "The configured warehouse doesn't exist, doesn't have AUTO_RESUME enabled, or the role lacks USAGE on it. Redo step 3 of the vendor setup (create/grant the warehouse) and confirm the exact name in the Warehouse form field.",
+        "problemas.row4.msg": "The agent lists databases and schemas but fails to read a table (\"Invalid SQL query\" or a permission error)",
+        "problemas.row4.fix": "Missing GRANT SELECT on that table/schema (tables created before the GRANT ... ON FUTURE TABLES), or the query doesn't start with SELECT/WITH and was rejected by design. Redo step 4 of the vendor setup for that schema.",
+        "problemas.row5.msg": "Connector shows \"Not configured\" after saving",
+        "problemas.row5.fix": "A required field was left empty. Open it again and fill in account, username, password, warehouse, database and schema (role and timeout are optional).",
+        "section.faq_seguridad": "FAQ and security notes",
+        "faq.q1": "Can the agent modify or delete data?",
+        "faq.a1": "No. Two independent safeguards prevent it: the connector validates in code that every query starts with SELECT or WITH (any other statement is rejected before reaching Snowflake), and the ruvic_reader role only has SELECT on the exposed schemas.",
+        "faq.q2": "Where is the password stored?",
+        "faq.a2": "As a secret in the platform's credential store, tied to your user. The UI never displays it again; it only shows \"set\". To change it, type a new one in the form; to keep it while editing other fields, leave the field empty.",
+        "faq.q3": "Credential rotation",
+        "faq.a3": "Recommended every 90 days or per your policy: change the password in Snowflake (ALTER USER ruvic_reader_user SET PASSWORD = '...'), update it in the connector form and click Test connection.",
+        "faq.q4": "What if the password is compromised?",
+        "faq.a4.step1": "Change the password in Snowflake immediately (ALTER USER ruvic_reader_user SET PASSWORD = '...') or disable the user (ALTER USER ruvic_reader_user SET DISABLED = TRUE).",
+        "faq.a4.step2": "Review the user's recent activity in SNOWFLAKE.ACCOUNT_USAGE.LOGIN_HISTORY and QUERY_HISTORY.",
+        "faq.a4.step3": "Update the new password in the connector form.",
+        "faq.q5": "Why use a small, dedicated warehouse?",
+        "faq.a5": "Every query the agent runs consumes compute time on the configured warehouse, which generates real charges under your Snowflake plan. A dedicated XSMALL warehouse for Ruvic, with a short AUTO_SUSPEND, isolates that cost from the rest of your organization and makes it easier to monitor. Note: estimate_query_cost uses EXPLAIN, which doesn't run the query or generate charges, but execute_query does.",
+        "faq.buenas_practicas.title": "Best practices",
+        "faq.buenas_practicas.body": "Always use a dedicated read-only user and role; assign a small exclusive warehouse to control costs; restrict access with a network policy if your organization requires it; do not expose schemas with sensitive data the agent doesn't need; and never share the password over insecure channels.",
+      },
+    };
+    /* El portal aplica el idioma del usuario (localStorage ruvic-docs-lang)
+       y actualiza [data-i18n], [data-i18n-placeholder] y [data-i18n-alt]. */
+  </script>
+</body>
+</html>
